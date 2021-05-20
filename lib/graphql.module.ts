@@ -33,6 +33,8 @@ import {
   mergeDefaults,
   normalizeRoutePath,
 } from './utils';
+import { CreateApp } from '../node_modules/@pablosz/envelop-app/dist/cjs/fastify';
+import { CreateApp as CreateExpressApp } from '../node_modules/@pablosz/envelop-app/dist/cjs/express';
 
 @Module({
   imports: [GraphQLSchemaBuilderModule],
@@ -169,7 +171,7 @@ export class GraphQLModule implements OnModuleInit, OnModuleDestroy {
     const platformName = httpAdapter.getType();
 
     if (platformName === 'express') {
-      this.registerExpress(apolloOptions);
+      await this.registerExpress(apolloOptions);
     } else if (platformName === 'fastify') {
       await this.registerFastify(apolloOptions);
     } else {
@@ -177,32 +179,48 @@ export class GraphQLModule implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private registerExpress(apolloOptions: GqlModuleOptions) {
+  private async registerExpress(apolloOptions: GqlModuleOptions) {
     const { ApolloServer } = loadPackage(
       'apollo-server-express',
       'GraphQLModule',
       () => require('apollo-server-express'),
     );
-    const path = this.getNormalizedPath(apolloOptions);
-    const {
-      disableHealthCheck,
-      onHealthCheck,
-      cors,
-      bodyParserConfig,
-    } = this.options;
+    // const path = this.getNormalizedPath(apolloOptions);
+    const { disableHealthCheck, onHealthCheck, cors, bodyParserConfig } =
+      this.options;
 
+    console.log(192, apolloOptions);
     const httpAdapter = this.httpAdapterHost.httpAdapter;
     const app = httpAdapter.getInstance();
+
+    const { schema, context } = apolloOptions;
+
+    const path = this.getNormalizedPath(apolloOptions);
+
+    const EnvelopApp = CreateExpressApp({
+      schema,
+      buildContext:
+        typeof context === 'object' ? () => context : (context as any),
+      websocketSubscriptions: 'both',
+      path,
+    });
+
+    const { router } = await EnvelopApp.buildApp({
+      app,
+    });
+
+    app.use(router);
+
     const apolloServer = new ApolloServer(apolloOptions as any);
 
-    apolloServer.applyMiddleware({
-      app,
-      path,
-      disableHealthCheck,
-      onHealthCheck,
-      cors,
-      bodyParserConfig,
-    });
+    // apolloServer.applyMiddleware({
+    //   app,
+    //   path,
+    //   disableHealthCheck,
+    //   onHealthCheck,
+    //   cors,
+    //   bodyParserConfig,
+    // });
 
     this._apolloServer = apolloServer;
   }
@@ -214,27 +232,37 @@ export class GraphQLModule implements OnModuleInit, OnModuleDestroy {
       () => require('apollo-server-fastify'),
     );
 
-    const httpAdapter = this.httpAdapterHost.httpAdapter;
-    const app = httpAdapter.getInstance();
+    const { schema, context } = apolloOptions;
+
     const path = this.getNormalizedPath(apolloOptions);
 
-    const apolloServer = new ApolloServer(apolloOptions as any);
-    const {
-      disableHealthCheck,
-      onHealthCheck,
-      cors,
-      bodyParserConfig,
-    } = this.options;
+    const EnvelopApp = CreateApp({
+      schema,
+      buildContext:
+        typeof context === 'object' ? () => context : (context as any),
+      websocketSubscriptions: 'both',
+      path,
+    });
 
-    await app.register(
-      apolloServer.createHandler({
-        disableHealthCheck,
-        onHealthCheck,
-        cors,
-        bodyParserConfig,
-        path,
-      }),
-    );
+    const { plugin } = EnvelopApp.buildApp();
+
+    const httpAdapter = this.httpAdapterHost.httpAdapter;
+    const app: import('fastify').FastifyInstance = httpAdapter.getInstance();
+
+    const apolloServer = new ApolloServer(apolloOptions as any);
+    const { disableHealthCheck, onHealthCheck, cors, bodyParserConfig } =
+      this.options;
+
+    await app.register(plugin, {});
+    // await app.register(
+    //   apolloServer.createHandler({
+    //     disableHealthCheck,
+    //     onHealthCheck,
+    //     cors,
+    //     bodyParserConfig,
+    //     path,
+    //   }),
+    // );
 
     this._apolloServer = apolloServer;
   }
